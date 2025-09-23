@@ -9,32 +9,37 @@ class PostController extends Controller
 {
     public function index()
     {
-        return \App\Models\Post::latest()->get();
+        return Post::latest()->get();
     }
 
-    public function store(\Illuminate\Http\Request $r)
+    public function store(Request $r)
     {
-        return \App\Models\Post::create($r->validate([
+        $data = $r->validate([
             'title' => 'required|string|max:255',
-            'body' => 'nullable|string'
-        ]));
+            'body'  => 'nullable|string',
+        ]);
+
+        $post = Post::create($data);
+        return $post;
     }
 
-    public function show(\App\Models\Post $post)
+    public function show(Post $post)
     {
         return $post;
     }
 
-    public function update(\Illuminate\Http\Request $r, \App\Models\Post $post)
+    public function update(Request $r, Post $post)
     {
-        $post->update($r->validate([
+        $data = $r->validate([
             'title' => 'sometimes|string|max:255',
-            'body' => 'nullable|string'
-        ]));
-        return $post;
+            'body'  => 'nullable|string',
+        ]);
+
+        $post->update($data);
+        return $post->fresh(); // <-- değişiklikleri yenile
     }
 
-    public function destroy(\App\Models\Post $post)
+    public function destroy(Post $post)
     {
         $post->delete();
         return response()->noContent();
