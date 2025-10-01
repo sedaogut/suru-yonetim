@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "./api";
 
+// === 3D BAĞIMLILIKLARI ===
+// npm i three @react-three/fiber @react-three/drei three-stdlib
+import * as THREE from "three";
+import { Canvas, useLoader } from "@react-three/fiber";
+import { OrbitControls, Center, Environment, Grid, Stats } from "@react-three/drei";
+import { GLTFLoader, OBJLoader, STLLoader } from "three-stdlib";
+
 /** API'den gelen farklı şekilleri tek tipe çevirme */
 function normalizePosts(payload) {
   if (Array.isArray(payload)) return payload;
@@ -24,11 +31,7 @@ function LineChart({ data = [], height = 160, padding = 14 }) {
   const d = pts
     .map(([x, y], i) => (i === 0 ? `M ${x},${y}` : `L ${x},${y}`))
     .join(" ");
-  const fill =
-    d +
-    ` L ${padding},${h - padding} L ${
-      w - padding
-    },${h - padding} Z`.replace("L", "L"); // basit alan dolgusu
+  const fill = d + ` L ${padding},${h - padding} L ${w - padding},${h - padding} Z`;
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height }}>
@@ -38,33 +41,147 @@ function LineChart({ data = [], height = 160, padding = 14 }) {
   );
 }
 
+// ==========================
+// 3D GÖRÜNTÜLEYİCİ BİLEŞENLERİ (JS — tip yok)
+// ==========================
+function GLTFModel({ url }) {
+  const gltf = useLoader(GLTFLoader, url);
+  return <primitive object={gltf.scene} />;
+}
+function STLModel({ url, wireframe }) {
+  const geometry = useLoader(STLLoader, url);
+  return (
+    <mesh geometry={geometry} castShadow receiveShadow>
+      <meshStandardMaterial metalness={0.1} roughness={0.8} wireframe={!!wireframe} />
+    </mesh>
+  );
+}
+function OBJModel({ url }) {
+  const obj = useLoader(OBJLoader, url);
+  return <primitive object={obj} />;
+}
+function ModelSwitcher({ url, ext, wireframe }) {
+  if (ext === "glb" || ext === "gltf") return <GLTFModel url={url} />;
+  if (ext === "stl") return <STLModel url={url} wireframe={wireframe} />;
+  if (ext === "obj") return <OBJModel url={url} />;
+  return null;
+}
+function Viewer3D() {
+  const [fileUrl, setFileUrl] = useState(null);
+  const [fileExt, setFileExt] = useState(null);
+  const [wireframe, setWireframe] = useState(false);
+  const [grid, setGrid] = useState(true);
+  const [autorotate, setAutorotate] = useState(true);
+  const [bg, setBg] = useState("#0b1020");
+
+  const onFile = (file) => {
+    const url = URL.createObjectURL(file);
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    setFileUrl(url);
+    setFileExt(ext);
+  };
+
+  return (
+    <div className="card">
+      <h3>3D Model — Buzağı Yemleme Robotu</h3>
+      <div className="row" style={{ gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="file"
+          accept=".glb,.gltf,.stl,.obj"
+          onChange={(e) => e.target.files && e.target.files[0] && onFile(e.target.files[0])}
+          className="input"
+          style={{ maxWidth: 360, background: "transparent", color: "inherit" }}
+        />
+        <label className="chip">
+          <input type="checkbox" checked={wireframe} onChange={(e) => setWireframe(e.target.checked)} /> Wireframe
+        </label>
+        <label className="chip">
+          <input type="checkbox" checked={grid} onChange={(e) => setGrid(e.target.checked)} /> Grid
+        </label>
+        <label className="chip">
+          <input type="checkbox" checked={autorotate} onChange={(e) => setAutorotate(e.target.checked)} /> Otomatik Döndür
+        </label>
+        <span className="chip">Arkaplan <input type="color" value={bg} onChange={(e) => setBg(e.target.value)} /></span>
+      </div>
+
+      <div style={{ height: 520, marginTop: 12, borderRadius: 16, overflow: "hidden", border: "1px solid var(--border)" }}>
+        <Canvas
+          shadows
+          camera={{ position: [4, 3, 6], fov: 40 }}
+          gl={{ antialias: true }}
+          onCreated={({ scene }) => {
+            scene.background = new THREE.Color(bg);
+          }}
+        >
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
+
+          <Center disableY>
+            {fileUrl ? (
+              <ModelSwitcher url={fileUrl} ext={fileExt || "glb"} wireframe={wireframe} />
+            ) : (
+              <Placeholder3D />
+            )}
+          </Center>
+
+          {grid && (
+            <Grid args={[20, 20]} cellSize={0.5} cellThickness={0.6} sectionThickness={1.2} fadeDistance={30} infiniteGrid position={[0, -0.001, 0]} />
+          )}
+
+          <Environment preset="warehouse" />
+          <OrbitControls makeDefault enableDamping dampingFactor={0.1} autoRotate={autorotate} autoRotateSpeed={0.6} />
+          <Stats className="stats" />
+        </Canvas>
+      </div>
+
+      {!fileUrl && (
+        <div className="empty" style={{ marginTop: 10 }}>
+          Dosya seçin veya sürükleyip bırakın (GLB/GLTF önerilir; STL/OBJ desteklenir).
+        </div>
+      )}
+      <p className="muted" style={{ marginTop: 8 }}>
+        STEP/IGES varsa önce GLB/OBJ/GLTF'e dönüştürün. Ölçü birimi mm olacak şekilde dışa aktarın.
+      </p>
+    </div>
+  );
+}
+function Placeholder3D() {
+  return (
+    <group>
+      <mesh position={[0, 0.5, 0]} castShadow receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial metalness={0.1} roughness={0.7} />
+      </mesh>
+      <mesh position={[1.2, 0.25, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.25, 0.25, 0.5, 24]} />
+        <meshStandardMaterial metalness={0.1} roughness={0.7} />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[-1.2, 0.1, 0]} castShadow receiveShadow>
+        <torusGeometry args={[0.35, 0.1, 16, 48]} />
+        <meshStandardMaterial metalness={0.1} roughness={0.7} />
+      </mesh>
+    </group>
+  );
+}
+
 export default function App() {
   // ---- Tema & Router
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("theme") || "dark"
-  );
-  const [view, setView] = useState(() =>
-    (typeof window !== "undefined" && window.location.hash.slice(1)) || "home"
-  );
+  const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
+  const [view, setView] = useState(() => (typeof window !== "undefined" && window.location.hash.slice(1)) || "home");
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
-
   useEffect(() => {
-    const onHash = () =>
-      setView(window.location.hash.replace("#", "") || "home");
+    const onHash = () => setView(window.location.hash.replace("#", "") || "home");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  const go = (id) => { window.location.hash = id; };
 
-  const go = (id) => {
-    window.location.hash = id;
-  };
-
-  // ---- Kullanıcı & Rol (PHP’deki isAdmin karşılığı)
+  // ---- Kullanıcı & Rol
   const userName = "Seda Ö.";
-  const isAdmin = true; // dilersen prop veya auth’tan al
+  const isAdmin = true;
 
   // ---- Gönderiler (API entegre)
   const [posts, setPosts] = useState([]);
@@ -73,7 +190,6 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef(null);
-
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -88,11 +204,8 @@ export default function App() {
         if (mounted) setLoading(false);
       }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
-
   const handleAdd = async () => {
     const value = title.trim();
     if (!value) return;
@@ -102,14 +215,13 @@ export default function App() {
       const { data } = await apiClient.post("/posts", { title: value });
       setPosts((p) => [data, ...p]);
       setTitle("");
-      inputRef.current?.focus();
+      inputRef.current?.focus && inputRef.current.focus();
     } catch {
       setError("Gönderi eklenemedi. Lütfen tekrar deneyin.");
     } finally {
       setAdding(false);
     }
   };
-
   const handleDelete = async (id) => {
     try {
       await apiClient.delete(`/posts/${id}`);
@@ -119,17 +231,13 @@ export default function App() {
     }
   };
 
-  // ---- Demo veriler (PHP panelindeki bölümlere uygun)
-  const animalsInit = useMemo(
-    () => [
-      { id: 1, kupe: "TR001", dogum: "2023-03-12", sut: 24 },
-      { id: 2, kupe: "TR002", dogum: "2022-11-01", sut: 18 },
-      { id: 3, kupe: "TR003", dogum: "2021-07-22", sut: 21 },
-    ],
-    []
-  );
+  // ---- Demo veriler
+  const animalsInit = useMemo(() => [
+    { id: 1, kupe: "TR001", dogum: "2023-03-12", sut: 24 },
+    { id: 2, kupe: "TR002", dogum: "2022-11-01", sut: 18 },
+    { id: 3, kupe: "TR003", dogum: "2021-07-22", sut: 21 },
+  ], []);
   const [animals, setAnimals] = useState(animalsInit);
-
   const alerts = {
     heat: ["TR002 için hareketlilik artışı", "TR003 için ısıl döngü uyarısı"],
     collar: ["TR001 tasma pili zayıf"],
@@ -137,7 +245,6 @@ export default function App() {
     treatment: ["TR003 antibiyotik günü"],
     feed: ["1. grup rasyon kontrolü"],
   };
-
   const schedule = [
     { gun: "Bugün", saat: "06:00 / 18:00" },
     { gun: "Yarın", saat: "06:00 / 18:00" },
@@ -148,31 +255,20 @@ export default function App() {
   const kpi = useMemo(() => {
     const total = animals.length;
     const dailyMilk = animals.reduce((a, b) => a + (b.sut || 0), 0);
-    const alertsCount = Object.values(alerts).reduce(
-      (a, b) => a + (b?.length || 0),
-      0
-    );
+    const alertsCount = Object.values(alerts).reduce((a, b) => a + (b?.length || 0), 0);
     return { total, dailyMilk, alertsCount };
   }, [animals]);
 
   // ---- Arama (basit filtreleme)
   const [q, setQ] = useState("");
   const filterText = (t) => t.toLowerCase().includes(q.toLowerCase());
-  const filteredAnimals = animals.filter((a) =>
-    filterText(`${a.kupe} ${a.dogum} ${a.sut}`)
-  );
+  const filteredAnimals = animals.filter((a) => filterText(`${a.kupe} ${a.dogum} ${a.sut}`));
 
   // ---- Hayvan Ayır (simülasyon)
-  const separate = (id) => {
-    setAnimals((prev) => prev.filter((x) => x.id !== id));
-  };
+  const separate = (id) => { setAnimals((prev) => prev.filter((x) => x.id !== id)); };
 
   // ---- Basit veri üretimi – grafik
-  const chartData = useMemo(
-    () => Array.from({ length: 7 }, () => Math.round(15 + Math.random() * 12)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [animals.length] // hayvan sayısı değişince örnek veriyi yenile
-  );
+  const chartData = useMemo(() => Array.from({ length: 7 }, () => Math.round(15 + Math.random() * 12)), [animals.length]);
 
   return (
     <>
@@ -200,7 +296,6 @@ export default function App() {
         @media (max-width: 800px){ .app{ grid-template-columns: 1fr; } .sidebar{ position:fixed; inset:0 auto 0 0; width:280px; transform:translateX(-100%); transition:transform .25s ease; z-index:1000; }
           .sidebar.open{ transform: translateX(0); } .burger{ display:flex; }
         }
-
         /* Sidebar */
         .sidebar { height:100vh; position:sticky; top:0; border-right:1px solid var(--border);
           backdrop-filter: blur(8px); background: var(--panel); box-shadow: var(--shadow); }
@@ -220,7 +315,6 @@ export default function App() {
         .has-sub.open > .submenu { display:block; }
         .submenu a { display:block; padding:9px 12px; font-size:14px; border-radius:10px; color:inherit; text-decoration:none; }
         .submenu a:hover{ background:var(--glass); }
-
         /* Main */
         main { padding:18px; }
         header.topbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
@@ -235,21 +329,17 @@ export default function App() {
         .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:42px; padding:0 14px; border-radius:12px; border:1px solid var(--border);
           background:linear-gradient(180deg, var(--brand), #4f46e5); color:#fff; font-weight:800; letter-spacing:.2px; cursor:pointer; transition: transform .06s ease; }
         .btn:active { transform: translateY(1px); }
-
         .grid { display:grid; gap:14px; }
         .cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
         .cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
         @media (max-width: 1200px){ .cols-3{ grid-template-columns: repeat(2, minmax(0,1fr)); } }
         @media (max-width: 800px){ .cols-3,.cols-2{ grid-template-columns: 1fr; } main{ padding:14px; } }
-
         .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); padding:14px; }
         .card h3 { margin:0 0 6px; font-size:16px; letter-spacing:.3px; }
         .kpi { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border-radius:14px; background:rgba(255,255,255,.06); border:1px solid var(--border); }
         .kpi .val { font-size:24px; font-weight:900; letter-spacing:-.02em; }
         .muted { color:var(--muted); font-size:13px; }
         footer { margin: 22px 0 8px; text-align:center; color:var(--muted); font-size:12px; }
-
-        /* Listeler & formlar */
         .row{ display:flex; gap:10px; align-items:center; }
         .input{ flex:1; height:44px; border-radius:12px; border:1px solid var(--border); background:rgba(255,255,255,.9); color:#0b1020; padding:0 12px; font-size:14px; outline:none; transition: box-shadow .2s, border-color .2s; }
         .input:focus{ border-color:#818cf8; box-shadow:0 0 0 3px rgba(99,102,241,.25); }
@@ -263,8 +353,6 @@ export default function App() {
         .ghost:hover{ opacity:1; }
         .err{ color:#fecaca; font-size:13px; margin-top:8px; }
         .empty{ border:1px dashed var(--border); border-radius:12px; padding:18px; text-align:center; background:rgba(255,255,255,.06); }
-
-        /* Görünümler */
         .view{ display:none; }
         .view.active{ display:block; animation: fade .15s ease; }
         @keyframes fade{ from{ opacity:.5; transform: translateY(4px); } to{ opacity:1; transform: none; } }
@@ -272,29 +360,17 @@ export default function App() {
 
       <div className="app">
         {/* Sidebar */}
-        <aside
-          className={`sidebar ${view === "_open" ? "open" : ""}`}
-          id="sidebar"
-        >
+        <aside className={`sidebar ${view === "_open" ? "open" : ""}`} id="sidebar">
           <div className="logo">
             <div className="brand">🐄 Çiftlik Paneli</div>
           </div>
           <ul className="menu">
             <li className="label">Menü</li>
-
-            <li
-              className={`sidebar-item ${view === "home" ? "active" : ""}`}
-              onClick={() => go("home")}
-            >
-              <a className="sidebar-link" href="#home">
-                🏠 <span>Anasayfa</span>
-              </a>
+            <li className={`sidebar-item ${view === "home" ? "active" : ""}`} onClick={() => go("home")}>
+              <a className="sidebar-link" href="#home">🏠 <span>Anasayfa</span></a>
             </li>
-
             <li className={`sidebar-item has-sub ${["hayvan-karti","hayvan-ekle","hayvan-listesi","hayvan-ayir"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#hayvan-karti" onClick={(e)=>e.preventDefault()}>
-                🐄 <span>Hayvan Yönetimi</span>
-              </a>
+              <a className="sidebar-link" href="#hayvan-karti" onClick={(e)=>e.preventDefault()}>🐄 <span>Hayvan Yönetimi</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="hayvan-karti"?"active":""}`}><a href="#hayvan-karti" onClick={()=>go("hayvan-karti")}>Hayvan Kartı</a></div>
                 <div className={`submenu-item ${view==="hayvan-ekle"?"active":""}`}><a href="#hayvan-ekle" onClick={()=>go("hayvan-ekle")}>Hayvan Ekle</a></div>
@@ -302,31 +378,22 @@ export default function App() {
                 <div className={`submenu-item ${view==="hayvan-ayir"?"active":""}`}><a href="#hayvan-ayir" onClick={()=>go("hayvan-ayir")}>Hayvan Ayır</a></div>
               </div>
             </li>
-
             <li className={`sidebar-item has-sub ${["sut-degerleri"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#sut-degerleri" onClick={(e)=>e.preventDefault()}>
-                💧 <span>Süt</span>
-              </a>
+              <a className="sidebar-link" href="#sut-degerleri" onClick={(e)=>e.preventDefault()}>💧 <span>Süt</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="sut-degerleri"?"active":""}`}><a href="#sut-degerleri" onClick={()=>go("sut-degerleri")}>Süt Değerleri</a></div>
               </div>
             </li>
-
             <li className={`sidebar-item has-sub ${["sut-miktari","sagim-takvimi","istatistikler"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#sut-miktari" onClick={(e)=>e.preventDefault()}>
-                📈 <span>Sürü Takip</span>
-              </a>
+              <a className="sidebar-link" href="#sut-miktari" onClick={(e)=>e.preventDefault()}>📈 <span>Sürü Takip</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="sut-miktari"?"active":""}`}><a href="#sut-miktari" onClick={()=>go("sut-miktari")}>Süt Miktarı</a></div>
                 <div className={`submenu-item ${view==="sagim-takvimi"?"active":""}`}><a href="#sagim-takvimi" onClick={()=>go("sagim-takvimi")}>Sağım Takvimi</a></div>
                 <div className={`submenu-item ${view==="istatistikler"?"active":""}`}><a href="#istatistikler" onClick={()=>go("istatistikler")}>İstatistikler</a></div>
               </div>
             </li>
-
             <li className={`sidebar-item has-sub ${["kizginlik","tasma","kova","tedavi","yem"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#kizginlik" onClick={(e)=>e.preventDefault()}>
-                🔔 <span>Uyarılar</span>
-              </a>
+              <a className="sidebar-link" href="#kizginlik" onClick={(e)=>e.preventDefault()}>🔔 <span>Uyarılar</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="kizginlik"?"active":""}`}><a href="#kizginlik" onClick={()=>go("kizginlik")}>Kızgınlık Kontrol</a></div>
                 <div className={`submenu-item ${view==="tasma"?"active":""}`}><a href="#tasma" onClick={()=>go("tasma")}>Tasma Kontrol</a></div>
@@ -335,49 +402,40 @@ export default function App() {
                 <div className={`submenu-item ${view==="yem"?"active":""}`}><a href="#yem" onClick={()=>go("yem")}>Yem Kontrol</a></div>
               </div>
             </li>
-
             <li className={`sidebar-item has-sub ${["grup-yonetimi","grup-listesi"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#grup-yonetimi" onClick={(e)=>e.preventDefault()}>
-                👥 <span>Gruplar</span>
-              </a>
+              <a className="sidebar-link" href="#grup-yonetimi" onClick={(e)=>e.preventDefault()}>👥 <span>Gruplar</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="grup-yonetimi"?"active":""}`}><a href="#grup-yonetimi" onClick={()=>go("grup-yonetimi")}>Grup Yönetimi</a></div>
                 <div className={`submenu-item ${view==="grup-listesi"?"active":""}`}><a href="#grup-listesi" onClick={()=>go("grup-listesi")}>Grup Listesi</a></div>
               </div>
             </li>
-
             <li className={`sidebar-item has-sub ${["ciftlik-ayarlari"].includes(view) ? "open active" : ""}`}>
-              <a className="sidebar-link" href="#ciftlik-ayarlari" onClick={(e)=>e.preventDefault()}>
-                ⚙️ <span>Genel Ayarlar</span>
-              </a>
+              <a className="sidebar-link" href="#ciftlik-ayarlari" onClick={(e)=>e.preventDefault()}>⚙️ <span>Genel Ayarlar</span></a>
               <div className="submenu">
                 <div className={`submenu-item ${view==="ciftlik-ayarlari"?"active":""}`}><a href="#ciftlik-ayarlari" onClick={()=>go("ciftlik-ayarlari")}>Çiftlik Ayarları</a></div>
               </div>
             </li>
-
             <li className="label">Geçiş İşlemleri</li>
             <li className={`sidebar-item ${view==="yemleme"?"active":""}`} onClick={()=>go("yemleme")}>
               <a className="sidebar-link" href="#yemleme">🔄 <span>Buzağı Besleme</span></a>
             </li>
-
+            {/* YENİ: 3D GÖRÜNTÜLEYİCİ */}
+            <li className={`sidebar-item ${view==="model-3d"?"active":""}`} onClick={()=>go("model-3d")}>
+              <a className="sidebar-link" href="#model-3d">🧊 <span>3D Model</span></a>
+            </li>
             {isAdmin && (
               <>
                 <li className="label">Yönetim</li>
                 <li className={`sidebar-item has-sub ${["yonetici-listesi"].includes(view) ? "open active" : ""}`}>
-                  <a className="sidebar-link" href="#yonetici-listesi" onClick={(e)=>e.preventDefault()}>
-                    🛡️ <span>Yönetici</span>
-                  </a>
+                  <a className="sidebar-link" href="#yonetici-listesi" onClick={(e)=>e.preventDefault()}>🛡️ <span>Yönetici</span></a>
                   <div className="submenu">
                     <div className={`submenu-item ${view==="yonetici-listesi"?"active":""}`}><a href="#yonetici-listesi" onClick={()=>go("yonetici-listesi")}>Yönetici Listesi</a></div>
                   </div>
                 </li>
               </>
             )}
-
             <li className="label">Hesap</li>
-            <li className="sidebar-item">
-              <a className="sidebar-link" href="/logout">🚪 <span>Oturumu Kapat</span></a>
-            </li>
+            <li className="sidebar-item"><a className="sidebar-link" href="/logout">🚪 <span>Oturumu Kapat</span></a></li>
           </ul>
         </aside>
 
@@ -385,35 +443,14 @@ export default function App() {
         <main>
           <header className="topbar">
             <div className="left-tools">
-              <button
-                className="burger"
-                onClick={() => {
-                  const el = document.querySelector(".sidebar");
-                  el?.classList.toggle("open");
-                }}
-                aria-label="Menüyü aç/kapat"
-              >
-                ☰
-              </button>
+              <button className="burger" onClick={() => { const el = document.querySelector(".sidebar"); el?.classList.toggle("open"); }} aria-label="Menüyü aç/kapat">☰</button>
               <div className="search" role="search">
-                <input
-                  type="search"
-                  placeholder="Panel içinde ara…"
-                  aria-label="Ara"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
+                <input type="search" placeholder="Panel içinde ara…" aria-label="Ara" value={q} onChange={(e) => setQ(e.target.value)} />
                 <span className="ico">🔎</span>
               </div>
             </div>
             <div className="actions">
-              <button
-                className="chip"
-                onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-                title="Tema değiştir"
-              >
-                🌓 Tema
-              </button>
+              <button className="chip" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title="Tema değiştir">🌓 Tema</button>
               <span className="chip">👤 {userName}</span>
             </div>
           </header>
@@ -424,58 +461,19 @@ export default function App() {
               <div className="card">
                 <h3>Özet</h3>
                 <div className="grid cols-3">
-                  <div className="kpi">
-                    <div>
-                      <div className="muted">Toplam Hayvan</div>
-                      <div className="val">{animals.length}</div>
-                    </div>
-                    <span>🐄</span>
-                  </div>
-                  <div className="kpi">
-                    <div>
-                      <div className="muted">Günlük Süt (L)</div>
-                      <div className="val">{kpi.dailyMilk}</div>
-                    </div>
-                    <span>💧</span>
-                  </div>
-                  <div className="kpi">
-                    <div>
-                      <div className="muted">Açık Uyarı</div>
-                      <div className="val">{kpi.alertsCount}</div>
-                    </div>
-                    <span>🔔</span>
-                  </div>
+                  <div className="kpi"><div><div className="muted">Toplam Hayvan</div><div className="val">{animals.length}</div></div><span>🐄</span></div>
+                  <div className="kpi"><div><div className="muted">Günlük Süt (L)</div><div className="val">{kpi.dailyMilk}</div></div><span>💧</span></div>
+                  <div className="kpi"><div><div className="muted">Açık Uyarı</div><div className="val">{kpi.alertsCount}</div></div><span>🔔</span></div>
                 </div>
               </div>
-
-              <div className="card">
-                <h3>Süt Üretimi</h3>
-                <LineChart data={chartData} />
-              </div>
-
+              <div className="card"><h3>Süt Üretimi</h3><LineChart data={chartData} /></div>
               <div className="card" role="region" aria-live="polite">
                 <h3>Hızlı Gönderiler</h3>
                 <div className="row">
-                  <input
-                    ref={inputRef}
-                    className="input"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                    placeholder="Başlık yazın..."
-                    aria-label="Başlık"
-                  />
-                  <button
-                    className="btn"
-                    onClick={handleAdd}
-                    disabled={adding || !title.trim()}
-                    title="Ekle"
-                  >
-                    {adding ? "Ekleniyor…" : "Ekle"}
-                  </button>
+                  <input ref={inputRef} className="input" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleAdd()} placeholder="Başlık yazın..." aria-label="Başlık" />
+                  <button className="btn" onClick={handleAdd} disabled={adding || !title.trim()} title="Ekle">{adding ? "Ekleniyor…" : "Ekle"}</button>
                 </div>
                 {error && <div className="err">{error}</div>}
-
                 <div className="list">
                   {loading ? (
                     <>
@@ -483,82 +481,43 @@ export default function App() {
                       <div className="item"><span className="muted">Yükleniyor…</span></div>
                     </>
                   ) : posts.length === 0 ? (
-                    <div className="empty">
-                      <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                        Henüz gönderi yok
-                      </div>
-                      <div style={{ opacity: 0.8, fontSize: 14 }}>
-                        Yukarıdan bir başlık ekleyin.
-                      </div>
-                    </div>
+                    <div className="empty"><div style={{ fontWeight: 800, marginBottom: 6 }}>Henüz gönderi yok</div><div style={{ opacity: 0.8, fontSize: 14 }}>Yukarıdan bir başlık ekleyin.</div></div>
                   ) : (
-                    posts
-                      .filter((p) => filterText(p.title ?? ""))
-                      .map((p, i) => {
-                        const id = String(p.id ?? p._id ?? `${p.title}-${i}`);
-                        const initial =
-                          ((p.title ?? "?").trim().charAt(0).toUpperCase()) ||
-                          "?";
-                        return (
-                          <div className="item" key={id}>
-                            <div className="left">
-                              <div className="avatar">{initial}</div>
-                              <span className="ttl">{p.title}</span>
-                            </div>
-                            {(p.id || p._id) && (
-                              <button
-                                className="ghost"
-                                aria-label="Sil"
-                                title="Sil"
-                                onClick={() => handleDelete(p.id ?? p._id)}
-                              >
-                                ✖
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })
+                    posts.filter((p) => filterText(p.title ?? "")).map((p, i) => {
+                      const id = String(p.id ?? p._id ?? `${p.title}-${i}`);
+                      const initial = ((p.title ?? "?").trim().charAt(0).toUpperCase()) || "?";
+                      return (
+                        <div className="item" key={id}>
+                          <div className="left"><div className="avatar">{initial}</div><span className="ttl">{p.title}</span></div>
+                          {(p.id || p._id) && (
+                            <button className="ghost" aria-label="Sil" title="Sil" onClick={() => handleDelete(p.id ?? p._id)}>✖</button>
+                          )}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
             </div>
-
             <div className="grid cols-2" style={{ marginTop: 14 }}>
               <div className="card">
                 <h3>Sağım Takvimi</h3>
                 <div className="list">
-                  {schedule
-                    .filter((x) => filterText(`${x.gun} ${x.saat}`))
-                    .map((x, idx) => (
-                      <div className="item" key={idx}>
-                        <div className="left">
-                          <span>📅</span>
-                          <span className="ttl">{x.gun}</span>
-                        </div>
-                        <b className="muted">{x.saat}</b>
-                      </div>
-                    ))}
+                  {schedule.filter((x) => filterText(`${x.gun} ${x.saat}`)).map((x, idx) => (
+                    <div className="item" key={idx}><div className="left"><span>📅</span><span className="ttl">{x.gun}</span></div><b className="muted">{x.saat}</b></div>
+                  ))}
                 </div>
               </div>
               <div className="card">
                 <h3>Hızlı İşlemler</h3>
                 <div className="row" style={{ flexWrap: "wrap" }}>
-                  <button className="btn" onClick={() => go("hayvan-ekle")}>
-                    ➕ Yeni Hayvan
-                  </button>
-                  <button className="btn" onClick={() => go("kizginlik")}>
-                    ⚠️ Kızgınlık
-                  </button>
-                  <button className="btn" onClick={() => go("sagim-takvimi")}>
-                    📅 Takvim
-                  </button>
-                  <button className="btn" onClick={() => go("ciftlik-ayarlari")}>
-                    ⚙️ Ayarlar
-                  </button>
+                  <button className="btn" onClick={() => go("hayvan-ekle")}>➕ Yeni Hayvan</button>
+                  <button className="btn" onClick={() => go("kizginlik")}>⚠️ Kızgınlık</button>
+                  <button className="btn" onClick={() => go("sagim-takvimi")}>📅 Takvim</button>
+                  <button className="btn" onClick={() => go("ciftlik-ayarlari")}>⚙️ Ayarlar</button>
                 </div>
               </div>
             </div>
-
             <footer>Made with ❤ {userName}</footer>
           </section>
 
@@ -569,20 +528,18 @@ export default function App() {
               <p className="muted">RFID veya Küpe No ile arayın.</p>
               <div className="row">
                 <input className="input" placeholder="RFID / Küpe No" id="rfid" />
-                <button
-                  className="btn"
-                  onClick={() => {
-                    const r = document.getElementById("rfid").value.trim().toLowerCase();
-                    const a = animals.find((x) => x.kupe.toLowerCase() === r);
-                    const el = document.getElementById("animalCard");
+                <button className="btn" onClick={() => {
+                  const elInput = document.getElementById("rfid");
+                  const r = (elInput && elInput.value ? elInput.value : "").trim().toLowerCase();
+                  const a = animals.find((x) => x.kupe.toLowerCase() === r);
+                  const el = document.getElementById("animalCard");
+                  if (el) {
                     el.innerHTML = a
                       ? `<div class="item"><div class="left"><div class="avatar">${a.kupe.slice(-2)}</div>
                          <span class="ttl">${a.kupe} · Doğum: ${a.dogum} · Günlük süt: ${a.sut}L</span></div></div>`
                       : `<div class="empty">Kayıt bulunamadı.</div>`;
-                  }}
-                >
-                  Bul
-                </button>
+                  }
+                }}>Bul</button>
               </div>
               <div id="animalCard" className="list" style={{ marginTop: 10 }} />
             </div>
@@ -592,35 +549,21 @@ export default function App() {
             <div className="card">
               <h3>Hayvan Ekle</h3>
               <div className="grid cols-2">
-                <div>
-                  <label className="muted">Küpe No</label>
-                  <input className="input" placeholder="TR012345…" id="ekleKupe" />
-                </div>
-                <div>
-                  <label className="muted">Doğum Tarihi</label>
-                  <input className="input" type="date" id="ekleDogum" />
-                </div>
+                <div><label className="muted">Küpe No</label><input className="input" placeholder="TR012345…" id="ekleKupe" /></div>
+                <div><label className="muted">Doğum Tarihi</label><input className="input" type="date" id="ekleDogum" /></div>
               </div>
               <div className="row" style={{ marginTop: 10 }}>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    const kupe = document.getElementById("ekleKupe").value.trim();
-                    const dogum = document.getElementById("ekleDogum").value || "—";
-                    if (!kupe) return;
-                    setAnimals((prev) => [
-                      ...prev,
-                      { id: Date.now(), kupe, dogum, sut: 0 },
-                    ]);
-                    document.getElementById("ekleKupe").value = "";
-                    document.getElementById("ekleDogum").value = "";
-                    const m = document.getElementById("ekleMsg");
-                    m.textContent = "Kaydedildi (demo).";
-                    setTimeout(() => (m.textContent = ""), 1500);
-                  }}
-                >
-                  Kaydet
-                </button>
+                <button className="btn" onClick={() => {
+                  const elKupe = document.getElementById("ekleKupe");
+                  const elDogum = document.getElementById("ekleDogum");
+                  const kupe = (elKupe && elKupe.value) ? elKupe.value.trim() : "";
+                  const dogum = (elDogum && elDogum.value) ? elDogum.value : "—";
+                  if (!kupe) return;
+                  setAnimals((prev) => [...prev, { id: Date.now(), kupe, dogum, sut: 0 }]);
+                  if (elKupe) elKupe.value = ""; if (elDogum) elDogum.value = "";
+                  const m = document.getElementById("ekleMsg");
+                  if (m) { m.textContent = "Kaydedildi (demo)."; setTimeout(() => (m.textContent = ""), 1500); }
+                }}>Kaydet</button>
                 <span id="ekleMsg" className="muted"></span>
               </div>
             </div>
@@ -632,20 +575,11 @@ export default function App() {
               <div className="list">
                 {filteredAnimals.map((a) => (
                   <div className="item" key={a.id}>
-                    <div className="left">
-                      <div className="avatar">{a.kupe.slice(-2)}</div>
-                      <span className="ttl">
-                        {a.kupe} · Doğum: {a.dogum}
-                      </span>
-                    </div>
-                    <button className="btn-ghost" onClick={() => separate(a.id)}>
-                      ✂️ Ayır
-                    </button>
+                    <div className="left"><div className="avatar">{a.kupe.slice(-2)}</div><span className="ttl">{a.kupe} · Doğum: {a.dogum}</span></div>
+                    <button className="btn-ghost" onClick={() => separate(a.id)}>✂️ Ayır</button>
                   </div>
                 ))}
-                {filteredAnimals.length === 0 && (
-                  <div className="empty">Kayıt yok.</div>
-                )}
+                {filteredAnimals.length === 0 && (<div className="empty">Kayıt yok.</div>)}
               </div>
             </div>
           </section>
@@ -657,15 +591,8 @@ export default function App() {
               <div className="list">
                 {animals.map((a) => (
                   <div className="item" key={a.id}>
-                    <div className="left">
-                      <div className="avatar">{a.kupe.slice(-2)}</div>
-                      <span className="ttl">
-                        {a.kupe} · Doğum: {a.dogum}
-                      </span>
-                    </div>
-                    <button className="btn-ghost" onClick={() => separate(a.id)}>
-                      ✂️ Ayır
-                    </button>
+                    <div className="left"><div className="avatar">{a.kupe.slice(-2)}</div><span className="ttl">{a.kupe} · Doğum: {a.dogum}</span></div>
+                    <button className="btn-ghost" onClick={() => separate(a.id)}>✂️ Ayır</button>
                   </div>
                 ))}
                 {animals.length === 0 && <div className="empty">Kayıt yok.</div>}
@@ -675,12 +602,8 @@ export default function App() {
 
           {/* SÜT & SÜRÜ */}
           <section className={`view ${view === "sut-degerleri" ? "active" : ""}`} id="sut-degerleri">
-            <div className="card">
-              <h3>Süt Değerleri</h3>
-              <LineChart data={chartData} height={180} />
-            </div>
+            <div className="card"><h3>Süt Değerleri</h3><LineChart data={chartData} height={180} /></div>
           </section>
-
           <section className={`view ${view === "sut-miktari" ? "active" : ""}`} id="sut-miktari">
             <div className="card">
               <h3>Süt Miktarı</h3>
@@ -689,66 +612,29 @@ export default function App() {
                 {["Bugün", "Dün", "2 gün önce", "3 gün önce"].map((d, i) => {
                   const l = 60 + i * 3 + Math.round(Math.random() * 6);
                   return (
-                    <div className="item" key={d}>
-                      <div className="left">
-                        <span>💧</span>
-                        <span className="ttl">{d}</span>
-                      </div>
-                      <b>{l} L</b>
-                    </div>
+                    <div className="item" key={d}><div className="left"><span>💧</span><span className="ttl">{d}</span></div><b>{l} L</b></div>
                   );
                 })}
               </div>
             </div>
           </section>
-
           <section className={`view ${view === "sagim-takvimi" ? "active" : ""}`} id="sagim-takvimi">
             <div className="card">
               <h3>Sağım Takvimi</h3>
               <div className="list">
                 {schedule.map((x, idx) => (
-                  <div className="item" key={idx}>
-                    <div className="left">
-                      <span>📅</span>
-                      <span className="ttl">{x.gun}</span>
-                    </div>
-                    <b className="muted">{x.saat}</b>
-                  </div>
+                  <div className="item" key={idx}><div className="left"><span>📅</span><span className="ttl">{x.gun}</span></div><b className="muted">{x.saat}</b></div>
                 ))}
               </div>
             </div>
           </section>
-
           <section className={`view ${view === "istatistikler" ? "active" : ""}`} id="istatistikler">
             <div className="card">
               <h3>İstatistikler</h3>
               <div className="grid cols-3">
-                <div className="kpi">
-                  <div>
-                    <div className="muted">Ortalama Süt (L)</div>
-                    <div className="val">
-                      {Math.round(
-                        (animals.reduce((a, b) => a + (b.sut || 0), 0) /
-                          Math.max(1, animals.length)) * 10
-                      ) / 10}
-                    </div>
-                  </div>
-                  <span>⏱️</span>
-                </div>
-                <div className="kpi">
-                  <div>
-                    <div className="muted">Sağım Süresi (dk)</div>
-                    <div className="val">28</div>
-                  </div>
-                  <span>🕒</span>
-                </div>
-                <div className="kpi">
-                  <div>
-                    <div className="muted">Randıman (%)</div>
-                    <div className="val">91</div>
-                  </div>
-                  <span>📊</span>
-                </div>
+                <div className="kpi"><div><div className="muted">Ortalama Süt (L)</div><div className="val">{Math.round((animals.reduce((a, b) => a + (b.sut || 0), 0) / Math.max(1, animals.length)) * 10) / 10}</div></div><span>⏱️</span></div>
+                <div className="kpi"><div><div className="muted">Sağım Süresi (dk)</div><div className="val">28</div></div><span>🕒</span></div>
+                <div className="kpi"><div><div className="muted">Randıman (%)</div><div className="val">91</div></div><span>📊</span></div>
               </div>
             </div>
           </section>
@@ -771,16 +657,9 @@ export default function App() {
                   {id === "yem" && "Yem Kontrol"}
                 </h3>
                 <div className="list">
-                  {list
-                    .filter((s) => filterText(s))
-                    .map((s, i) => (
-                      <div className="item" key={`${id}-${i}`}>
-                        <div className="left">
-                          <span>🔔</span>
-                          <span className="ttl">{s}</span>
-                        </div>
-                      </div>
-                    ))}
+                  {list.filter((s) => filterText(s)).map((s, i) => (
+                    <div className="item" key={`${id}-${i}`}><div className="left"><span>🔔</span><span className="ttl">{s}</span></div></div>
+                  ))}
                 </div>
               </div>
             </section>
@@ -791,60 +670,28 @@ export default function App() {
             <div className="card">
               <h3>Grup Yönetimi</h3>
               <div className="list">
-                <div className="item">
-                  <div className="left">
-                    <span>👥</span>
-                    <span className="ttl">1. Grup</span>
-                  </div>
-                  <button className="btn-ghost">Düzenle</button>
-                </div>
-                <div className="item">
-                  <div className="left">
-                    <span>👥</span>
-                    <span className="ttl">2. Grup</span>
-                  </div>
-                  <button className="btn-ghost">Düzenle</button>
-                </div>
+                <div className="item"><div className="left"><span>👥</span><span className="ttl">1. Grup</span></div><button className="btn-ghost">Düzenle</button></div>
+                <div className="item"><div className="left"><span>👥</span><span className="ttl">2. Grup</span></div><button className="btn-ghost">Düzenle</button></div>
               </div>
             </div>
           </section>
-
           <section className={`view ${view === "grup-listesi" ? "active" : ""}`} id="grup-listesi">
             <div className="card">
               <h3>Grup Listesi</h3>
               <div className="list">
-                <div className="item">
-                  <div className="left">
-                    <span>📋</span>
-                    <span className="ttl">1. Grup · 12 hayvan</span>
-                  </div>
-                </div>
-                <div className="item">
-                  <div className="left">
-                    <span>📋</span>
-                    <span className="ttl">2. Grup · 9 hayvan</span>
-                  </div>
-                </div>
+                <div className="item"><div className="left"><span>📋</span><span className="ttl">1. Grup · 12 hayvan</span></div></div>
+                <div className="item"><div className="left"><span>📋</span><span className="ttl">2. Grup · 9 hayvan</span></div></div>
               </div>
             </div>
           </section>
-
           <section className={`view ${view === "ciftlik-ayarlari" ? "active" : ""}`} id="ciftlik-ayarlari">
             <div className="card">
               <h3>Çiftlik Ayarları</h3>
               <div className="grid cols-2">
-                <div>
-                  <label className="muted">Başlık</label>
-                  <input className="input" defaultValue="Seda Çiftlik" />
-                </div>
-                <div>
-                  <label className="muted">Logo (URL)</label>
-                  <input className="input" defaultValue="/logo.png" />
-                </div>
+                <div><label className="muted">Başlık</label><input className="input" defaultValue="Seda Çiftlik" /></div>
+                <div><label className="muted">Logo (URL)</label><input className="input" defaultValue="/logo.png" /></div>
               </div>
-              <p className="muted" style={{ marginTop: 8 }}>
-                Not: Demo alanıdır. Kalıcı kayıt için kendi API’na gönder.
-              </p>
+              <p className="muted" style={{ marginTop: 8 }}>Not: Demo alanıdır. Kalıcı kayıt için kendi API’na gönder.</p>
             </div>
           </section>
 
@@ -854,29 +701,19 @@ export default function App() {
               <h3>Buzağı Besleme</h3>
               <p className="muted">Bu bölüm ayrı sayfa yerine tek sayfa içinde gösterilir.</p>
               <div className="grid cols-2">
-                <div>
-                  <label className="muted">Günlük Rasyon (L)</label>
-                  <input className="input" id="rationL" defaultValue="2.0" />
-                </div>
-                <div>
-                  <label className="muted">Sıklık (gün/kez)</label>
-                  <input className="input" id="rationF" defaultValue="3" />
-                </div>
+                <div><label className="muted">Günlük Rasyon (L)</label><input className="input" id="rationL" defaultValue="2.0" /></div>
+                <div><label className="muted">Sıklık (gün/kez)</label><input className="input" id="rationF" defaultValue="3" /></div>
               </div>
               <div className="row" style={{ marginTop: 10 }}>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    const m = document.getElementById("rationMsg");
-                    m.textContent = "Kaydedildi (demo).";
-                    setTimeout(() => (m.textContent = ""), 1500);
-                  }}
-                >
-                  💾 Kaydet
-                </button>
+                <button className="btn" onClick={() => { const m = document.getElementById("rationMsg"); if (m) { m.textContent = "Kaydedildi (demo)."; setTimeout(() => (m.textContent = ""), 1500); } }}>💾 Kaydet</button>
                 <span id="rationMsg" className="muted"></span>
               </div>
             </div>
+          </section>
+
+          {/* YENİ: 3D GÖRÜNÜM */}
+          <section className={`view ${view === "model-3d" ? "active" : ""}`} id="model-3d">
+            <Viewer3D />
           </section>
 
           {/* YÖNETİM (Admin) */}
@@ -889,13 +726,7 @@ export default function App() {
                     { ad: "Yönetici 1", rol: "Süper Admin" },
                     { ad: "Yönetici 2", rol: "Editör" },
                   ].map((x) => (
-                    <div className="item" key={x.ad}>
-                      <div className="left">
-                        <span>🛡️</span>
-                        <span className="ttl">{x.ad}</span>
-                      </div>
-                      <span className="muted">{x.rol}</span>
-                    </div>
+                    <div className="item" key={x.ad}><div className="left"><span>🛡️</span><span className="ttl">{x.ad}</span></div><span className="muted">{x.rol}</span></div>
                   ))}
                 </div>
               </div>
